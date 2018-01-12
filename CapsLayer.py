@@ -2,133 +2,116 @@ import tensorflow as tf
 import numpy as np
 
 
-class Capsule:
-    def __init__(self,num_caps,caps_dims,name):
-        self.num_caps = num_caps
-        self.caps_dims = caps_dims
-        self.name = name
-        self.dtype = tf.float32
+
+def capsule(input_,num_caps,caps_dims,batch_size,init_sigma = 0.3,name="capsule",bridge_input=True): 
+    if bridge_input:
+        input_ = bridge(input_,num_caps,name = name+"_bridge")
     
-    def capsule(self,input_,input_caps,input_n_dims,batch_size,init_sigma = 0.3): 
-        self.init_sigma = init_sigma
-
-        W_init = tf.random_normal(shape=(1, input_caps, self.num_caps, self.caps_dims, input_n_dims ),
-            stddev=self.init_sigma, dtype=tf.float32, name=self.name + "W_init")
+    input_caps = input_[1]
+    input_n_dims = input_[2]
 
 
-        #Wij
-        W = tf.Variable(W_init, name=self.name+"_W")
+    W_init = tf.random_normal(shape=(1, input_caps, num_caps, caps_dims, input_n_dims ),
+        stddev=init_sigma, dtype=tf.float32, name=name + "W_init")
 
 
-        W_tiled = tf.tile(W, [batch_size, 1, 1, 1, 1], name=self.name + "_W_tiled")
-
-        
-        #U hat
-        caps_predicted = tf.matmul(W_tiled, input_,
-                                            name=self.name + "_predicted")
+    #Wij
+    W = tf.Variable(W_init, name=name+"_W")
 
 
-        #Bij 
-
-        #raw_weights_init = tf.ones([1, input_caps, self.num_caps, 1, 1],
-        #               dtype=np.float32, name="raw_weights")
-        
-        raw_weights_init = tf.random_normal(shape=(1, input_caps, self.num_caps, 1, 1),
-            stddev=self.init_sigma, dtype=tf.float32, name=self.name + "_raw_weights")
-        
-
-        raw_weights_var = tf.Variable(raw_weights_init, name=self.name+"_raw_weights_var")
-
-        raw_weights = tf.tile(raw_weights_var, [batch_size, 1, 1, 1, 1], name=self.name + "_raw_weights_tiled")
-        #Cij
-        routing_weights = tf.nn.softmax(raw_weights, dim=2, name=self.name + "_routing_weights")
+    W_tiled = tf.tile(W, [batch_size, 1, 1, 1, 1], name=name + "_W_tiled")
 
 
-        #Sj
-        weighted_predictions = tf.multiply(routing_weights, caps_predicted,
-                                               name=self.name + "_weighted_predictions")
-
-        weighted_sum = tf.reduce_sum(weighted_predictions, axis=1, keep_dims=True,
-                                     name=self.name + "_weighted_sum")
-        
-        #Vj
-        caps_output_round_1 = squash(weighted_sum, axis=-2,
-                                      name=self.name + "_caps_output_round_1")
-
-        caps_output_round_1_tiled = tf.tile(
-            caps_output_round_1, [1, input_caps, 1, 1, 1],
-            name=self.name + "_caps_output_round_1_tiled")
-
-        #Aij
-        agreement = tf.matmul(caps_predicted, caps_output_round_1_tiled,
-                              transpose_a=True, name=self.name + "_agreement")
-        
-        raw_weights_round_2 = tf.add(agreement, raw_weights,
-                                     name=self.name + "_raw_weights_round_2")
+    #U hat
+    caps_predicted = tf.matmul(W_tiled, input_[0],
+                                        name=name + "_predicted")
 
 
-        routing_weights_round_2 = tf.nn.softmax(raw_weights_round_2,
-                                                dim=2,
-                                                name=self.name + "_routing_weights_round_2")
-        weighted_predictions_round_2 = tf.multiply(routing_weights_round_2,
-                                                   caps_predicted,
-                                                   name=self.name + "_weighted_predictions_round_2")
+    #Bij 
+    raw_weights_init = tf.random_normal(shape=(1, input_caps, num_caps, 1, 1),
+        stddev=init_sigma, dtype=tf.float32, name=name + "_raw_weights")
 
-        
-        weighted_sum_round_2 = tf.reduce_sum(weighted_predictions_round_2,
-                                             axis=1, keep_dims=True,
-                                             name=self.name + "_weighted_sum_round_2")
-        
-        
 
-        caps_output_round_2 = squash(weighted_sum_round_2,
-                                      axis=-2,
-                                      name=self.name+"_output_round_2")
-        
-        
-        caps_output = caps_output_round_2
-        return caps_output
+    raw_weights_var = tf.Variable(raw_weights_init, name=name+"_raw_weights_var")
 
-    
-    #input_ capsule data
-    def bridge(self,input_,output_):
-        #change input of one capsule to fit into another capsule
-        caps_raw = tf.reshape(input_, [-1, self.num_caps, self.caps_dims],
-                       name=self.name+"caps_raw")
-        caps_output_expanded = tf.expand_dims(caps_raw, -1,
-                                       name=self.name + "_output_expanded")
+    raw_weights = tf.tile(raw_weights_var, [batch_size, 1, 1, 1, 1], name=name + "_raw_weights_tiled")
+    #Cij
+    routing_weights = tf.nn.softmax(raw_weights, dim=2, name=name + "_routing_weights")
 
-        caps_output_tile = tf.expand_dims(caps_output_expanded, 2,
-                                       name=self.name + "_output_tile")
 
-        caps_output_tiled = tf.tile(caps_output_tile, [1, 1, output_.num_caps, 1, 1],
-                                     name=self.name + "_bridge")
-        return caps_output_tiled
-    
+    #Sj
+    weighted_predictions = tf.multiply(routing_weights, caps_predicted,
+                                           name=name + "_weighted_predictions")
 
-def conv_to_caps(yeet,num_maps,caps_dims,caps,name,kernel_size=4,strides=2,activation=None):
+    weighted_sum = tf.reduce_sum(weighted_predictions, axis=1, keep_dims=True,
+                                 name=name + "_weighted_sum")
 
-    kachow = tf.layers.conv2d(yeet, name=name, filters = num_maps*caps_dims,
+    #Vj
+    caps_output_round_1 = squash(weighted_sum, axis=-2,
+                                  name=name + "_caps_output_round_1")
+
+    caps_output_round_1_tiled = tf.tile(
+        caps_output_round_1, [1, input_caps, 1, 1, 1],
+        name=name + "_caps_output_round_1_tiled")
+
+    #Aij
+    agreement = tf.matmul(caps_predicted, caps_output_round_1_tiled,
+                          transpose_a=True, name=name + "_agreement")
+
+    raw_weights_round_2 = tf.add(agreement, raw_weights,
+                                 name=name + "_raw_weights_round_2")
+
+
+    routing_weights_round_2 = tf.nn.softmax(raw_weights_round_2,
+                                            dim=2,
+                                            name=name + "_routing_weights_round_2")
+    weighted_predictions_round_2 = tf.multiply(routing_weights_round_2,
+                                               caps_predicted,
+                                               name=name + "_weighted_predictions_round_2")
+
+
+    weighted_sum_round_2 = tf.reduce_sum(weighted_predictions_round_2,
+                                         axis=1, keep_dims=True,
+                                         name=name + "_weighted_sum_round_2")
+
+
+
+    caps_output_round_2 = squash(weighted_sum_round_2,
+                                  axis=-2,
+                                  name=name+"_output_round_2")
+
+
+    caps_output = caps_output_round_2
+    return caps_output,num_caps,caps_dims
+
+
+
+def conv_to_caps(input_,num_maps,caps_dims,name="conv",kernel_size=4,strides=2,activation=None):
+
+    kachow = tf.layers.conv2d(input_, name=name, filters = num_maps*caps_dims,
                          kernel_size = kernel_size,strides = strides, padding = "valid",activation=activation)
 
     conv_n_caps = num_maps * kachow.get_shape().as_list()[1]  * kachow.get_shape().as_list()[2] 
-
-    out = bridge(kachow,conv_n_caps,caps_dims,caps)
-    return out,conv_n_caps  
     
-def bridge(input_,num_caps,caps_dims,output_):
+    kachow = [kachow,conv_n_caps,caps_dims]
+    return kachow
+
+def caps_to_conv(input_):
+    return tf.squeeze(input_[0],axis=1)
+
+def bridge(input_,output_caps,name="bridge"):
         #change input of one capsule to fit into another capsule
-        caps_raw = tf.reshape(input_, [-1, num_caps, caps_dims],
-                       name="caps_rawsdf")
+        caps_raw = tf.reshape(input_[0], [-1, input_[1], input_[2]],
+                       name=name+"_caps_raw")
         caps_output_expanded = tf.expand_dims(caps_raw, -1,
-                                       name="caps_output_expanded")
+                                       name=name+"_caps_output_expanded")
 
         caps_output_tile = tf.expand_dims(caps_output_expanded, 2,
-                                       name="caps_output_tile")
+                                       name=name+"_caps_output_tile")
 
-        caps_output_tiled = tf.tile(caps_output_tile, [1, 1, output_.num_caps, 1, 1],
-                                     name="caps_bridge")
-        return caps_output_tiled
+        caps_output_tiled = tf.tile(caps_output_tile, [1, 1, output_caps, 1, 1],
+                                     name=name+"_caps_bridge")
+        return caps_output_tiled,input_[1],input_[2]
 
 
 def safe_norm(s, axis=-1, epsilon=1e-7, keep_dims=False, name=None):
@@ -170,7 +153,7 @@ def margin_loss(caps,num_caps,y,m_plus = 0.9,m_minus = 0.1,lambda_ = 0.5):
     return margin_loss
 
 def log_loss(output,num_caps,y):
-    T = tf.one_hot(y, depth=2, name="T")
+    T = tf.one_hot(y, depth=num_caps, name="T")
     
     caps_output_norm = tf.squeeze(safe_norm(output, axis=-2, keep_dims=True,
                               name="caps_output_norm"),axis=[1,3,4])
